@@ -9,6 +9,7 @@ from app.services.parser import (
     _extract_skills,
     _fetch_source,
     _fixture_vacancies,
+    _normalize_location,
     _normalize_salary_range,
     collect_segment_vacancies,
 )
@@ -36,6 +37,12 @@ def test_salary_normalization_converts_gross_to_net_rub():
 
     assert salary_min == 87_000
     assert salary_max == 174_000
+
+
+def test_location_normalization_repairs_mojibake_city():
+    mojibake = "Санкт-Петербург".encode("utf-8").decode("cp1251")
+
+    assert _normalize_location(mojibake) == "saint_petersburg"
 
 
 def test_skill_extraction_uses_token_boundaries():

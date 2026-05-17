@@ -1,9 +1,11 @@
-node_modules
-.next
+node_modules/
+.next/
 .git*
 .gitignore
 *.md
-.env.local
-.env.development
+.env*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 deploy/
 .ui-ux-skill/

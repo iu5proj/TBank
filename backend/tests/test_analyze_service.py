@@ -88,7 +88,7 @@ def _cached_result(request_hash: str = "hash", *, validation_status: str = "vali
         segment_data_version=payload["segment"]["segment_data_version"],
         model_name="gpt-oss-20b",
         model_version="gpt-oss-20b-salary-v1",
-        prompt_version="salary_estimation_prompt_v11",
+        prompt_version="salary_estimation_prompt_v13",
         input_payload=payload,
         output_payload=_valid_output(request_hash) if validation_status == "valid" else {"error": "old failed run"},
         validation_status=validation_status,

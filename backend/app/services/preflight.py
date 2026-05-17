@@ -316,19 +316,14 @@ def _region(location: str) -> str:
         return "remote"
     mapping = {
         "москва": "moscow",
-        "РјРѕСЃРєРІР°": "moscow",
         "moscow": "moscow",
         "санкт-петербург": "saint_petersburg",
         "санкт петербург": "saint_petersburg",
         "спб": "saint_petersburg",
-        "СЃР°РЅРєС‚-РїРµС‚РµСЂР±СѓСЂРі": "saint_petersburg",
-        "СЃР°РЅРєС‚ РїРµС‚РµСЂР±СѓСЂРі": "saint_petersburg",
         "spb": "saint_petersburg",
         "remote": "remote",
         "удаленно": "remote",
         "удалённо": "remote",
-        "СѓРґР°Р»РµРЅРЅРѕ": "remote",
-        "СѓРґР°Р»С‘РЅРЅРѕ": "remote",
     }
     return mapping.get(normalized, _slug(normalized, fallback="unknown_region"))
 
@@ -343,7 +338,7 @@ def _experience_bucket(experience_years: float) -> str:
 
 def _slug(value: str, *, fallback: str) -> str:
     value = value.casefold().strip()
-    value = re.sub(r"[^a-z0-9а-яёР°-СЏС‘]+", "_", value)
+    value = re.sub(r"[^a-z0-9а-яё]+", "_", value)
     value = re.sub(r"_+", "_", value).strip("_")
     return value or fallback
 
@@ -368,7 +363,7 @@ def _retrieval_score(vacancy: Vacancy, profile: ResumeProfile) -> tuple[int, flo
 
 
 def _tokenize(value: str) -> list[str]:
-    return [token for token in re.split(r"[^a-z0-9а-яёР°-СЏС‘+#/.-]+", value.casefold()) if len(token) >= 2]
+    return [token for token in re.split(r"[^a-z0-9а-яё+#/.-]+", value.casefold()) if len(token) >= 2]
 
 
 def _truncate_description(description: str | None, *, limit: int = 1200) -> str | None:

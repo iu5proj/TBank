@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     GPT_OSS_API_KEY: str = "local-dev-key"
     GPT_OSS_MODEL_NAME: str = "gpt-oss-20b"
     GPT_OSS_MODEL_VERSION: str = "gpt-oss-20b-salary-v1"
-    GPT_OSS_PROMPT_VERSION: str = "salary_estimation_prompt_v11"
+    GPT_OSS_PROMPT_VERSION: str = "salary_estimation_prompt_v13"
     GPT_OSS_TIMEOUT: float = 90.0
     GPT_OSS_MAX_TOKENS: int = 1400
     GPT_OSS_TEMPERATURE: float = 0.1

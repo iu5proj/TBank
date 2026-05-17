@@ -171,7 +171,10 @@ def _load_prompt() -> str:
     prompt_dir = Path(__file__).resolve().parents[1] / "prompts"
     prompt_path = prompt_dir / f"{settings.GPT_OSS_PROMPT_VERSION}.txt"
     if not prompt_path.exists():
-        prompt_path = prompt_dir / "salary_estimation_prompt_v1.txt"
+        raise GptOssClientError(
+            f"configured prompt file does not exist: {prompt_path}",
+            raw_payload={"prompt_version": settings.GPT_OSS_PROMPT_VERSION},
+        )
     return prompt_path.read_text(encoding="utf-8")
 
 

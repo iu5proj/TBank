@@ -22,8 +22,9 @@ from app.predictor import (
 )
 from app.schemas import Counterfactual, PredictionRequest, PredictionResponse
 
-MOSCOW = "РњРѕСЃРєРІР°"
-KAZAN = "РљР°Р·Р°РЅСЊ"
+MOSCOW = "Москва"
+KAZAN = "Казань"
+MOJIBAKE_MOSCOW = MOSCOW.encode("utf-8").decode("cp1251")
 
 
 class TestStubPredictor:
@@ -145,11 +146,11 @@ def test_parse_json_object_accepts_fenced_model_output():
 
 
 def test_location_multiplier_handles_mojibake_moscow():
-    assert _location_multiplier(MOSCOW) > _location_multiplier(KAZAN)
+    assert _location_multiplier(MOJIBAKE_MOSCOW) > _location_multiplier(KAZAN)
 
 
 def test_decode_mojibake_repairs_utf8_read_as_cp1251():
-    assert _decode_mojibake(MOSCOW) == "Москва"
+    assert _decode_mojibake(MOJIBAKE_MOSCOW) == MOSCOW
 
 
 def test_vacancy_count_phrase_uses_russian_plural_forms():

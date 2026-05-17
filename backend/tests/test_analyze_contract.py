@@ -13,6 +13,10 @@ from app.services.market_evidence import build_candidate_segment_keys, build_mar
 from app.services.preflight import build_segment_key, calculate_request_hash, is_stale, parse_segment_key
 
 
+def _mojibake(value: str) -> str:
+    return value.encode("utf-8").decode("cp1251")
+
+
 def _request() -> AnalyzeRequest:
     return AnalyzeRequest(
         profile={
@@ -155,16 +159,28 @@ def test_real_cyrillic_moscow_maps_to_seeded_segment():
     assert build_segment_key(request.profile) == "backend_developer:python:moscow:middle"
 
 
-def test_unicode_moscow_maps_to_seeded_segment():
+def test_mojibake_moscow_maps_to_seeded_segment():
     request = AnalyzeRequest(
         profile={
             "title": "Python Backend Developer",
             "experience_years": 3,
-            "location": "Москва",
+            "location": _mojibake("Москва"),
             "skills": ["Python", "FastAPI", "PostgreSQL"],
         },
     )
     assert build_segment_key(request.profile) == "backend_developer:python:moscow:middle"
+
+
+def test_mojibake_remote_maps_to_remote_segment():
+    request = AnalyzeRequest(
+        profile={
+            "title": "Python Backend Developer",
+            "experience_years": 3,
+            "location": _mojibake("удалённо"),
+            "skills": ["Python", "FastAPI", "PostgreSQL"],
+        },
+    )
+    assert build_segment_key(request.profile) == "backend_developer:python:remote:middle"
 
 
 def test_unicode_data_analyst_maps_to_data_segment():

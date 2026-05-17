@@ -32,11 +32,11 @@ ROLE_BASE_SALARIES: dict[str, int] = {
 }
 
 LOCATION_MULTIPLIERS: dict[str, float] = {
-    "РјРѕСЃРєРІР°": 1.3,
     "москва": 1.3,
     "moscow": 1.3,
-    "Р СљР С•РЎРѓР С”Р Р†Р В°": 1.3,
     "remote": 1.1,
+    "удаленно": 1.1,
+    "удалённо": 1.1,
     "default": 0.8,
 }
 
@@ -669,11 +669,16 @@ def _location_multiplier(location: str) -> float:
 
 
 def _decode_mojibake(value: str) -> str:
-    try:
-        repaired = value.encode("cp1251").decode("utf-8")
-    except UnicodeError:
-        return value
-    return repaired if repaired else value
+    repaired = value
+    for _ in range(2):
+        try:
+            candidate = repaired.encode("cp1251").decode("utf-8")
+        except UnicodeError:
+            return repaired
+        if not candidate or candidate == repaired:
+            return repaired
+        repaired = candidate
+    return repaired
 
 
 def _extract_message_content(envelope: dict[str, Any], *, api_style: str = "openai") -> str:

@@ -81,11 +81,16 @@ def canonical_skill_key(value: Any) -> str:
 
 def decode_mojibake(value: str) -> str:
     """Repair UTF-8 text that was accidentally decoded as cp1251."""
-    try:
-        repaired = value.encode("cp1251").decode("utf-8")
-    except UnicodeError:
-        return value
-    return repaired if repaired else value
+    repaired = value
+    for _ in range(2):
+        try:
+            candidate = repaired.encode("cp1251").decode("utf-8")
+        except UnicodeError:
+            return repaired
+        if not candidate or candidate == repaired:
+            return repaired
+        repaired = candidate
+    return repaired
 
 
 def build_market_evidence(

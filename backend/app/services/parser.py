@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.market_segment import MarketSegment
 from app.models.vacancy import Vacancy
+from app.services.market_evidence import decode_mojibake
 
 logger = logging.getLogger(__name__)
 
@@ -635,14 +636,14 @@ def _clean_text(value: Any) -> str:
 
 
 def _normalize_location(value: Any) -> str:
-    text = _clean_text(value).casefold()
-    if "москва" in text or "moscow" in text or "РјРѕСЃРєРІР°" in text:
+    text = decode_mojibake(_clean_text(value)).casefold()
+    if "москва" in text or "moscow" in text:
         return "moscow"
-    if "петербург" in text or "spb" in text or "СЃР°РЅРєС‚" in text:
+    if "петербург" in text or "spb" in text:
         return "saint_petersburg"
     if "удален" in text or "удалён" in text or "remote" in text:
         return "remote"
-    slug = re.sub(r"[^a-z0-9а-яёР°-СЏС‘]+", "_", text).strip("_")
+    slug = re.sub(r"[^a-z0-9а-яё]+", "_", text).strip("_")
     return slug or "unknown_region"
 
 

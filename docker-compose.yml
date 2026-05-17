@@ -41,8 +41,6 @@ services:
       GPT_OSS_TIMEOUT: ${GPT_OSS_TIMEOUT:-90}
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend/app:/app/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,7 +48,6 @@ services:
         condition: service_healthy
     networks:
       - zarabotok-net
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   ml_service:
     build:
@@ -63,13 +60,10 @@ services:
       ML_OPENAI_MAX_TOKENS: ${ML_OPENAI_MAX_TOKENS:-500}
     ports:
       - "${ML_SERVICE_HOST_PORT:-8002}:8001"
-    volumes:
-      - ./ml_service/app:/app/app
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - zarabotok-net
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
   frontend:
     build:
