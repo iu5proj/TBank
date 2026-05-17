@@ -1,0 +1,15 @@
+{
+  "profile": {
+    "title": "Python Backend Developer",
+    "experience_years": 3,
+    "location": "Москва",
+    "skills": ["Python", "FastAPI", "PostgreSQL"],
+    "resume_text": "Разрабатывал backend-сервисы на FastAPI, проектировал REST API и работал с PostgreSQL.",
+    "current_salary": 150000
+  },
+  "options": {
+    "target_salary": 250000,
+    "force_refresh": false
+  }
+}
+

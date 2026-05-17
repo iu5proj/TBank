@@ -1,0 +1,1 @@
+"""Zarabotok Backend Application."""

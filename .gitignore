@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Docker
+docker-compose.override.yml
+get-docker.sh
+
+# ML model artifacts
+*.pkl
+*.onnx
+*.joblib
+*.h5
+!ml_service/app/models/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Alembic
+alembic/versions/__pycache__/
+
+# Pytest
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Local Codex backup from project re-layout
+back/
+backend_codex_initial_*/
+*.codex_initial_*.bak
+infra/
+llm_service/
+parser_worker/

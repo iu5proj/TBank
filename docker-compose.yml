@@ -1,0 +1,105 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-zarabotok}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+      POSTGRES_DB: ${POSTGRES_DB:-zarabotok_db}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-zarabotok}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - zarabotok-net
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - zarabotok-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      GPT_OSS_TIMEOUT: ${GPT_OSS_TIMEOUT:-90}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - zarabotok-net
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  ml_service:
+    build:
+      context: ./ml_service
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      ML_OPENAI_TIMEOUT: ${ML_OPENAI_TIMEOUT:-25}
+      ML_OPENAI_MAX_TOKENS: ${ML_OPENAI_MAX_TOKENS:-500}
+    ports:
+      - "${ML_SERVICE_HOST_PORT:-8002}:8001"
+    volumes:
+      - ./ml_service/app:/app/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - zarabotok-net
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - llm
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      OLLAMA_LOAD_TIMEOUT: ${OLLAMA_LOAD_TIMEOUT:-10m}
+    networks:
+      - zarabotok-net
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - ml_service
+    networks:
+      - zarabotok-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+
+networks:
+  zarabotok-net:
+    driver: bridge
