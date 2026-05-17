@@ -12,13 +12,15 @@ Backend Developer`, а система:
 4. строит `market_evidence` по фактическим вакансиям;
 5. вызывает локальную модель gpt-oss через `ml_service`;
 6. валидирует и нормализует JSON;
-7. сохраняет результат в PostgreSQL и возвращает стабильный API-ответ.
+7. если модельный путь не дал валидный JSON, строит backend grounded fallback;
+8. сохраняет результат в PostgreSQL и возвращает стабильный API-ответ.
 
 Важная инженерная идея: backend не перекладывает весь расчет на LLM. Backend
 сам готовит рыночные факты, квантильную вилку, skill-gap и кандидаты
 рекомендаций. Модель используется как reasoning/wording слой. Если локальная
 модель не успела, вернула только thinking или сломала JSON, `ml_service`
-возвращает grounded fallback по тем же рыночным данным.
+возвращает grounded fallback по тем же рыночным данным. Если ошибка дошла до
+backend, он строит такой же валидный fallback сам.
 
 ## Сервисы
 
@@ -84,7 +86,15 @@ PostgreSQL.
 
 ### `nginx`
 
-Опциональный reverse proxy. Для backend-first live-review можно не использовать.
+Reverse proxy для полного приложения: Next.js на `/`, backend API на `/api/*`,
+OpenAPI docs на `/docs`, health на `/health`.
+
+### `frontend`
+
+Next.js-сервис в `frontend/` на порту `3000`. В production-like compose
+пользователь открывает `http://localhost`, nginx проксирует `/` во frontend,
+а `/api/*` - в backend. В dev frontend использует `NEXT_PUBLIC_API_URL=/api/v1`
+и rewrite из `frontend/next.config.ts`.
 
 ## Основной request flow
 
@@ -113,8 +123,9 @@ PostgreSQL.
 13. Backend вызывает `ml_service`.
 14. `ml_service` вызывает Ollama или возвращает grounded fallback.
 15. Backend валидирует строгий JSON-контракт.
-16. Backend сохраняет `llm_salary_results`.
-17. Клиент получает единый response envelope.
+16. Если JSON/схема невалидны, backend строит финальный `grounded-fallback`.
+17. Backend сохраняет `llm_salary_results`.
+18. Клиент получает единый response envelope.
 
 ## Cache invariant
 
@@ -193,7 +204,9 @@ ML-логики, поднимите `GPT_OSS_PROMPT_VERSION`.
 - нормализует factor impact и confidence level;
 - возвращает fallback, если JSON отсутствует.
 
-Строгая финальная проверка остается на backend.
+Строгая финальная проверка остается на backend. Если после любой ошибки у
+backend нет валидного payload от модели, он собирает deterministic
+`grounded-fallback` из тех же входных данных и возвращает пользователю success.
 
 ## Почему fallback допустим
 
@@ -222,4 +235,3 @@ Fallback не использует внешние рыночные знания.
 | `PARSER_ENABLE_FIXTURE_SOURCE` | включает deterministic fixture source |
 | `OLLAMA_KEEP_ALIVE` | сколько держать модель в памяти |
 | `OLLAMA_LOAD_TIMEOUT` | внутренний timeout загрузки модели в Ollama |
-

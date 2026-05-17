@@ -71,6 +71,25 @@ services:
       - zarabotok-net
     command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+        NEXT_PUBLIC_ANALYZE_TIMEOUT_MS: ${NEXT_PUBLIC_ANALYZE_TIMEOUT_MS:-120000}
+        NEXT_PUBLIC_API_AUTH_TOKEN: ${NEXT_PUBLIC_API_AUTH_TOKEN:-}
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+      NEXT_PUBLIC_ANALYZE_TIMEOUT_MS: ${NEXT_PUBLIC_ANALYZE_TIMEOUT_MS:-120000}
+      NEXT_PUBLIC_API_AUTH_TOKEN: ${NEXT_PUBLIC_API_AUTH_TOKEN:-}
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
+    depends_on:
+      - backend
+    networks:
+      - zarabotok-net
+
   ollama:
     image: ollama/ollama:latest
     profiles:
@@ -92,6 +111,7 @@ services:
     depends_on:
       - backend
       - ml_service
+      - frontend
     networks:
       - zarabotok-net
 

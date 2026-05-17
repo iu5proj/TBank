@@ -56,3 +56,4 @@ backend_codex_initial_*/
 infra/
 llm_service/
 parser_worker/
+frontend/.git.frontend-source/

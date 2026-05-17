@@ -85,7 +85,7 @@ reason = data["confidence"].get("reason") or ""
 if reason:
     print("Confidence reason:", reason)
     lowered = reason.lower()
-    if "fallback" in lowered or "таймаут" in lowered or "timeout" in lowered:
+    if payload.get("source") == "grounded-fallback" or "fallback" in lowered or "таймаут" in lowered or "timeout" in lowered:
         print(
             "NOTE: response used grounded fallback. Warmup removes model load time, "
             "but full analyze can still exceed ML_OPENAI_TIMEOUT on local gpt-oss. "

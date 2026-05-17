@@ -18,6 +18,7 @@ from app.config import settings
 from app.models.llm_salary_result import LlmSalaryResult
 from app.schemas.analyze import AnalyzeRequest, AnalyzeResponse, GptOssSalaryResult
 from app.services.gpt_oss_client import GptOssClientError, gpt_oss_client
+from app.services.grounded_fallback import build_grounded_fallback_output
 from app.services.market_evidence import canonical_skill_key
 from app.services.preflight import (
     NoCandidateVacanciesError,
@@ -78,13 +79,13 @@ class AnalyzeService:
         try:
             lock_acquired = await self._acquire_lock(redis, lock_key, lock_token)
         except RedisError as exc:
-            logger.exception("Could not acquire idempotency lock for request_hash=%s", preflight.request_hash)
-            return AnalyzeResponse(
-                status="error",
-                code="LOCK_UNAVAILABLE",
-                message="Could not acquire the idempotency lock for this request.",
-                validation_errors=[str(exc)],
+            logger.warning(
+                "Could not acquire idempotency lock for request_hash=%s; continuing without Redis lock: %s",
+                preflight.request_hash,
+                exc,
             )
+            redis = None
+            lock_acquired = True
         if not lock_acquired:
             existing = await find_llm_result_by_hash(db, preflight.request_hash)
             if existing is not None and existing.validation_status == "valid":
@@ -95,6 +96,8 @@ class AnalyzeService:
                 message="A request with the same request_hash is already being processed.",
             )
 
+        fallback_source = False
+        validation_errors_for_storage: list[str] = []
         try:
             existing = await find_llm_result_by_hash(db, preflight.request_hash)
             if existing is not None and existing.validation_status == "valid":
@@ -114,6 +117,18 @@ class AnalyzeService:
                 time.monotonic() - model_started_at,
             )
             validation = validate_gpt_oss_output(raw_output, preflight.llm_input_payload)
+            if validation.status != "valid" or validation.output is None:
+                fallback_source = True
+                validation_errors_for_storage = validation.errors
+                logger.warning(
+                    "GPT-OSS output invalid for request_hash=%s; using grounded fallback: %s",
+                    preflight.request_hash,
+                    validation.errors,
+                )
+                validation = self._grounded_fallback_validation(
+                    preflight.llm_input_payload,
+                    reason="; ".join(validation.errors) or "model output did not match schema",
+                )
             output_payload = validation.output.model_dump(mode="json") if validation.output else validation.raw_output
             await self._save_result(
                 db=db,
@@ -121,22 +136,24 @@ class AnalyzeService:
                 input_payload=preflight.llm_input_payload,
                 output_payload=output_payload,
                 validation_status=validation.status,
-                validation_errors=validation.errors,
+                validation_errors=validation_errors_for_storage or validation.errors,
             )
         except GptOssClientError as exc:
+            fallback_source = True
+            logger.warning(
+                "GPT-OSS call failed for request_hash=%s; using grounded fallback: %s",
+                preflight.request_hash,
+                exc,
+            )
+            validation = self._grounded_fallback_validation(preflight.llm_input_payload, reason=str(exc))
+            output_payload = validation.output.model_dump(mode="json") if validation.output else validation.raw_output
             await self._save_result(
                 db=db,
                 request=request,
                 input_payload=preflight.llm_input_payload,
-                output_payload=exc.raw_payload or {"error": str(exc)},
-                validation_status="failed",
-                validation_errors=[str(exc)],
-            )
-            return AnalyzeResponse(
-                status="error",
-                code="LLM_OUTPUT_VALIDATION_FAILED",
-                message="The model did not return a payload that matches the expected JSON contract.",
-                validation_errors=[str(exc)],
+                output_payload=output_payload,
+                validation_status=validation.status,
+                validation_errors=[str(exc)] + validation.errors,
             )
         finally:
             await self._release_lock(redis, lock_key, lock_token, lock_acquired=lock_acquired)
@@ -149,7 +166,19 @@ class AnalyzeService:
                 validation_errors=validation.errors,
             )
 
-        return AnalyzeResponse(status="success", source="gpt-oss-20b", data=validation.output)
+        source = "grounded-fallback" if fallback_source else "gpt-oss-20b"
+        return AnalyzeResponse(status="success", source=source, data=validation.output)
+
+    def _grounded_fallback_validation(self, input_payload: dict[str, Any], *, reason: str) -> OutputValidation:
+        raw_output = build_grounded_fallback_output(input_payload, reason=reason)
+        validation = validate_gpt_oss_output(raw_output, input_payload)
+        if validation.status != "valid":
+            logger.error(
+                "Grounded fallback failed validation for request_hash=%s: %s",
+                input_payload.get("request_hash"),
+                validation.errors,
+            )
+        return validation
 
     def _response_from_cached(self, result: LlmSalaryResult) -> AnalyzeResponse:
         if result.validation_status != "valid" or not result.output_payload:

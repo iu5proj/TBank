@@ -7,7 +7,7 @@
 - Docker Engine;
 - Docker Compose v2;
 - Python 3.11+ для локальных тестов;
-- свободные порты `8000`, `8002`, `5433`, `6379`.
+- свободные порты `80`, `3000`, `8000`, `8002`, `5433`, `6379`.
 
 Для GPU-режима:
 
@@ -52,7 +52,7 @@ ML_PREDICTOR_MODE=stub
 cd /mnt/d/projects/MLtbank
 docker compose --profile llm up -d ollama
 docker compose exec ollama ollama pull gpt-oss:20b
-docker compose up -d --build backend ml_service postgres redis
+docker compose up -d --build backend ml_service frontend nginx postgres redis
 docker compose exec backend alembic upgrade head
 ```
 
@@ -61,6 +61,7 @@ docker compose exec backend alembic upgrade head
 ```bash
 curl -s http://127.0.0.1:8000/health; echo
 curl -s http://127.0.0.1:8002/health; echo
+curl -I http://127.0.0.1/; echo
 ```
 
 ## 4. Локальный запуск с GPU
@@ -69,7 +70,7 @@ curl -s http://127.0.0.1:8002/health; echo
 cd /mnt/d/projects/MLtbank
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile llm up -d ollama
 docker compose exec ollama ollama pull gpt-oss:20b
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build backend ml_service postgres redis
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build backend ml_service frontend nginx postgres redis
 docker compose exec backend alembic upgrade head
 ```
 
@@ -126,9 +127,9 @@ Summary: source=gpt-oss-20b vacancies=14/14 salary=200000/215000/250000 RUB conf
 Top recommendation: Добавить подтверждение Kubernetes
 ```
 
-Если smoke сообщает grounded fallback, это не авария. Это означает, что
-локальная модель не успела или не вернула финальный JSON, а `ml_service`
-вернул расчет по `market_evidence`.
+Если smoke сообщает `source=grounded-fallback`, это не авария. Это означает,
+что локальная модель не успела или не вернула финальный JSON, а `ml_service`
+или backend вернул расчет по `candidate_vacancies` и `market_evidence`.
 
 ## 7. Полный режим ожидания модели
 
@@ -137,7 +138,7 @@ Top recommendation: Добавить подтверждение Kubernetes
 
 ```bash
 GPT_OSS_TIMEOUT=180 ML_OPENAI_TIMEOUT=150 \
-  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --force-recreate backend ml_service
+  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --force-recreate backend ml_service frontend nginx
 
 bash scripts/live_review_smoke.sh
 ```
@@ -150,7 +151,8 @@ bash scripts/live_review_smoke.sh
 Перед реальным деплоем:
 
 - задайте сильный `SECRET_KEY`;
-- задайте `API_AUTH_TOKEN`;
+- задайте `API_AUTH_TOKEN` только если frontend тоже должен отправлять bearer-token
+  (`NEXT_PUBLIC_API_AUTH_TOKEN`) или если API закрыт внешним proxy/auth слоем;
 - ограничьте `BACKEND_CORS_ORIGINS`;
 - смените `POSTGRES_PASSWORD`;
 - не публикуйте `.env`;
@@ -167,6 +169,7 @@ DEBUG=false
 API_AUTH_TOKEN=<strong-token>
 SECRET_KEY=<strong-secret>
 BACKEND_CORS_ORIGINS=["https://example.com"]
+NEXT_PUBLIC_API_AUTH_TOKEN=<same-token-for-private-demo-only>
 VACANCY_SOURCES=trudvsem,habr
 PARSER_ENABLE_FIXTURE_SOURCE=false
 ```
@@ -177,7 +180,7 @@ PARSER_ENABLE_FIXTURE_SOURCE=false
 
 ```bash
 git pull
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build --force-recreate backend ml_service
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build --force-recreate backend ml_service frontend nginx
 docker compose exec backend alembic upgrade head
 bash scripts/live_review_smoke.sh
 ```
@@ -204,4 +207,3 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile llm dow
 ```
 
 Команду с `-v` используйте только если точно нужно очистить состояние.
-

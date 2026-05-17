@@ -15,6 +15,12 @@
 }
 ```
 
+`source` для успешного ответа:
+
+- `gpt-oss-20b` - модельный ответ прошел backend-валидацию;
+- `grounded-fallback` - модель/runner не вернули валидный JSON, поэтому backend собрал валидный ответ из `candidate_vacancies` и `market_evidence`;
+- `cache` - результат взят из валидного cache по `request_hash`.
+
 При ошибке:
 
 ```json
@@ -22,8 +28,8 @@
   "status": "error",
   "source": null,
   "data": null,
-  "code": "LLM_OUTPUT_VALIDATION_FAILED",
-  "message": "The model did not return a payload that matches the expected JSON contract.",
+  "code": "NO_CANDIDATE_VACANCIES",
+  "message": "Not enough candidate vacancies for segment ...",
   "validation_errors": ["..."]
 }
 ```
@@ -190,4 +196,3 @@ Backend требует:
 - `confidence.level` один из `low`, `medium`, `high`;
 - `factor_analysis` и `recommendations` являются массивами объектов;
 - `recommendations` не пустой.
-

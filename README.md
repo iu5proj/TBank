@@ -1,59 +1,100 @@
 # Zarabotok ML/RAG
 
-Backend-first реализация пайплайна оценки дохода по резюме из ТЗ
-`TZ_dlya_Codex_Zarabotok_ML_RAG_GPT_OSS`.
+Zarabotok - сервис оценки рыночной зарплаты по резюме. Пользователь заполняет
+профиль, навыки, опыт и желаемую зарплату, а система возвращает зарплатную
+вилку, уверенность оценки, факторы влияния и рекомендации по улучшению резюме.
 
-## Документация
+Проект сделан как локальный full-stack контур: frontend, backend, база,
+Redis-lock, ML-boundary и локальная gpt-oss модель работают вместе через
+Docker Compose.
 
-- [Архитектура](docs/ARCHITECTURE.md) - сервисы, request flow, данные, cache/lock, ML fallback.
-- [Деплой](DEPLOYMENT.md) - локальный, GPU, production-like запуск, миграции, smoke checks.
-- [API-контракт](docs/API_CONTRACT.md) - `/api/v1/analyze`, `/api/v1/parser/refresh`, структура ответа.
-- [Live-review и диагностика](docs/LIVE_REVIEW.md) - сценарий показа, GPU warmup, типовые сбои.
+## Зачем это нужно
 
-Главный инвариант:
+Обычная оценка зарплаты по резюме часто выглядит как одна условная цифра без
+объяснений. Здесь результат строится иначе:
+
+- берутся реальные или тестовые вакансии подходящего сегмента;
+- backend заранее считает рыночные факты: квантили зарплат, совпавшие навыки,
+  недостающие навыки и кандидаты рекомендаций;
+- gpt-oss используется для объяснений и структурирования вывода, а не как
+  единственный источник правды;
+- если модель не вернула JSON или не успела ответить, пользователь всё равно
+  получает валидный расчет по тем же рыночным данным.
+
+Главный принцип:
 
 ```text
-one request_hash = one valid cached llm_salary_results row
+пользователь должен получить ответ даже при сбое локальной модели
 ```
 
-Валидный результат по `request_hash` не пересчитывается. Failed-cache можно
-заменить новым ответом, чтобы не отравлять локальное demo после разового сбоя
-Ollama или невалидного JSON.
+## Что входит в проект
 
-Backend валидирует вход, обновляет один рыночный сегмент, достает максимум
-актуальных `candidate_vacancies` из целевого и близких смежных сегментов,
-защищает LLM-вызов lock/cache, валидирует JSON ответа модели и сохраняет
-valid/failed результат. Для стабильного live-review backend также готовит
-детерминированный `market_evidence`: квантильную рыночную выборку, совпавшие
-и недостающие навыки, приблизительный uplift навыков внутри переданных
-вакансий и кандидаты рекомендаций. ML service использует эти факты как
-grounding и, если локальная модель ушла в долгую генерацию или вернула только
-thinking, возвращает быстрый grounded fallback без внешних рыночных знаний.
+- `frontend/` - Next.js интерфейс: форма резюме, пошаговый ввод, страница результата.
+- `backend/` - FastAPI API: валидация запроса, подготовка рыночных данных,
+  cache/lock, строгая проверка результата и сохранение ответа.
+- `ml_service/` - HTTP-граница модели: локальный deterministic stub для быстрых
+  проверок или прокси к Ollama/gpt-oss.
+- `nginx/` - единая точка входа: `/` ведет во frontend, `/api/*` в backend.
+- `scripts/` - smoke-проверки и прогрев локальной модели.
+- `docs/` - подробности API, архитектуры, live-review и деплоя.
 
-## Структура
+## Как работает запрос
 
-- `backend/` - FastAPI, SQLAlchemy, Alembic, preflight, RAG retrieval, validation/storage.
-- `ml_service/` - HTTP-граница модели: быстрый stub для тестов или прокси к локальному Ollama/gpt-oss runner.
-- `parser/` - отдельный parser dataset от второго разработчика, сохранен для batch-сборов.
-- `nginx/` - reverse proxy для docker-compose.
-- `back/Samosir_tbank/` - исходная вложенная копия, из которой backend был перенесен в корень.
+1. Пользователь открывает frontend на `http://localhost`.
+2. Frontend отправляет профиль в `POST /api/v1/analyze`.
+3. Backend нормализует должность, город, опыт и навыки.
+4. Backend определяет рыночный сегмент, например
+   `backend_developer:python:moscow:middle`.
+5. Backend подбирает актуальные вакансии для сегмента и близких направлений.
+6. Backend строит `market_evidence`: зарплатные квантили, покрытие навыков,
+   недостающие навыки и заготовки рекомендаций.
+7. Backend считает `request_hash`. Если такой валидный результат уже есть в
+   базе, он возвращается из cache без повторного вызова модели.
+8. Для нового запроса backend берет Redis-lock, чтобы одинаковые запросы не
+   запускали несколько дорогих модельных вызовов одновременно.
+9. Backend вызывает `ml_service`.
+10. `ml_service` либо обращается к gpt-oss через Ollama, либо возвращает быстрый
+    deterministic ответ в stub-режиме.
+11. Backend валидирует строгий JSON-контракт.
+12. Если модель вернула не JSON, неполную схему или timeout, backend строит
+    `grounded-fallback` из уже подготовленных вакансий и `market_evidence`.
+13. Валидный результат сохраняется в PostgreSQL и возвращается frontend.
 
-## Запуск
+## Источники ответа
+
+В успешном response envelope поле `source` показывает, откуда пришел результат:
+
+- `gpt-oss-20b` - модель вернула валидный JSON, backend его принял;
+- `grounded-fallback` - модельный путь дал сбой, backend собрал ответ сам по
+  рыночным данным;
+- `cache` - результат уже был сохранен для такого `request_hash`.
+
+`grounded-fallback` не использует внешние знания и не придумывает зарплаты. Он
+берет только переданные вакансии, профиль пользователя и заранее рассчитанный
+`market_evidence`. Поэтому это не аварийная заглушка “из воздуха”, а безопасный
+способ не оставлять пользователя без результата.
+
+## Быстрый запуск
 
 ```bash
+cd /mnt/d/projects/MLtbank
 cp .env.example .env
-docker compose up --build
+docker compose up -d --build
 docker compose exec backend alembic upgrade head
 docker compose exec backend python -m app.seed_test_data
 ```
 
-API docs:
+После запуска:
 
 ```text
-http://localhost:8000/docs
+Приложение: http://localhost
+Frontend напрямую: http://localhost:3000
+Backend docs: http://localhost:8000/docs
+Backend health: http://localhost:8000/health
+ML health: http://localhost:8002/health
 ```
 
-Smoke request:
+## Минимальная проверка API
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/analyze \
@@ -64,205 +105,164 @@ curl -X POST http://localhost:8000/api/v1/analyze \
       "experience_years": 3,
       "location": "Москва",
       "skills": ["Python", "FastAPI", "PostgreSQL"],
-      "resume_text": "Разрабатывал backend-сервисы на FastAPI",
+      "resume_text": "Разрабатывал backend-сервисы на FastAPI и PostgreSQL",
       "current_salary": 150000
     },
-    "options": {"target_salary": 250000, "force_refresh": false}
+    "options": {
+      "target_salary": 250000,
+      "force_refresh": false
+    }
   }'
 ```
 
-## Если HH заблокирован
+Ожидаемый верхний уровень ответа:
 
-HH не является обязательным источником. Отключите его в `.env`:
-
-```env
-VACANCY_SOURCES=trudvsem,habr,fixture
+```json
+{
+  "status": "success",
+  "source": "gpt-oss-20b",
+  "data": {
+    "request_hash": "...",
+    "salary_range": {
+      "min": 180000,
+      "median": 220000,
+      "max": 280000,
+      "currency": "RUB"
+    },
+    "recommendations": []
+  }
+}
 ```
 
-Каждый источник обрабатывается fail-open: ошибка HH/Habr/Trudvsem логируется,
-refresh сегмента продолжается по оставшимся источникам. `fixture` нужен для
-локальной проверки без внешней сети.
+Если `source` равен `grounded-fallback`, пользовательский сценарий всё равно
+успешен: модель не дала корректный JSON, но расчет построен по рыночным данным.
 
-## Реальный gpt-oss endpoint
+## Режимы ML
 
-По умолчанию backend вызывает локальный `ml_service`:
-
-```env
-GPT_OSS_CLIENT_MODE=service
-GPT_OSS_SERVICE_URL=http://ml_service:8001
-GPT_OSS_ANALYZE_PATH=/analyze
-```
-
-Для OpenAI-compatible endpoint:
-
-```env
-GPT_OSS_CLIENT_MODE=openai_compatible
-GPT_OSS_BASE_URL=http://llm-service:8000/v1
-GPT_OSS_API_KEY=local-dev-key
-GPT_OSS_MODEL_NAME=gpt-oss-20b
-GPT_OSS_MODEL_VERSION=gpt-oss-20b-salary-v1
-GPT_OSS_PROMPT_VERSION=salary_estimation_prompt_v13
-```
-
-Prompt лежит в `backend/app/prompts/salary_estimation_prompt_v13.txt`; изменение
-`GPT_OSS_PROMPT_VERSION` меняет `request_hash`.
-
-## Проверки
-
-```bash
-cd /mnt/d/projects/MLtbank
-bash scripts/run_backend_ml_checks.sh
-```
-
-Ручной вариант:
-
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev]"
-python -m ruff check app tests
-python -m pytest
-alembic upgrade head
-deactivate
-
-cd ../ml_service
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev]"
-python -m pytest tests/test_predictor.py
-deactivate
-```
-
-## Live-review smoke
-
-Для демонстрации без ручного разбора длинного `curl`:
-
-```bash
-cd /mnt/d/projects/MLtbank
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile llm up -d --force-recreate ollama
-docker compose exec ollama ollama pull gpt-oss:20b
-docker compose up -d --build --force-recreate ml_service backend
-docker compose exec backend alembic upgrade head
-bash scripts/warm_ollama_gpu.sh
-bash scripts/live_review_smoke.sh
-```
-
-Скрипт ждет `/health` у backend и `ml_service`, вызывает
-`POST /api/v1/analyze` на fixture для middle Python backend developer и
-проверяет, что ответ успешный, использует все переданные вакансии, возвращает
-RUB-вилку и рекомендации. Если локальная модель думает слишком долго,
-`ml_service` должен вернуть grounded fallback после `ML_OPENAI_TIMEOUT`, а не
-уронить backend.
-
-`scripts/warm_ollama_gpu.sh` нужен именно для GPU-прогрева перед показом. Он
-проверяет `nvidia-smi` внутри compose-контейнера `ollama`, делает короткий
-JSON-запрос к `/api/generate` с `format=json` и `think=false`, после чего оставляет
-модель в памяти через `OLLAMA_KEEP_ALIVE`. Если в логах Ollama видно
-`context canceled` примерно через `ML_OPENAI_TIMEOUT`, это означает, что
-HTTP-клиент `ml_service` сам оборвал долгую загрузку модели. Для live-review это
-не фатально: backend должен получить быстрый grounded fallback. Для демонстрации
-реального GPU-path сначала выполните warmup-скрипт.
-
-На RTX 3060 Ti `gpt-oss:20b` обычно загружается частично на GPU и частично на
-CPU. `ollama ps` может показывать примерно `57%/43% CPU/GPU`; это нормально для
-8GB VRAM. Быстрый live-review режим держит `ML_OPENAI_TIMEOUT=25`, поэтому
-полный analyze может успеть не всегда и тогда вернется grounded fallback по
-переданным вакансиям. Если нужно именно дождаться полного ответа модели, можно
-пересоздать backend и ml_service с большим таймаутом:
-
-```bash
-GPT_OSS_TIMEOUT=180 ML_OPENAI_TIMEOUT=150 \
-  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --force-recreate backend ml_service
-bash scripts/live_review_smoke.sh
-```
-
-Для live-review безопаснее оставить короткий таймаут: зритель не ждет модель,
-а пайплайн все равно демонстрирует RAG-выборку, расчет рыночной вилки, skill-gap
-и рекомендации.
-
-## ML service: real gpt-oss runner
-
-`ml_service` now has two runtime modes:
+По умолчанию для локального запуска можно оставить быстрый stub:
 
 ```env
 ML_PREDICTOR_MODE=stub
 ```
 
-keeps deterministic local smoke tests, while
+Для реального локального gpt-oss через Ollama:
 
 ```env
 ML_PREDICTOR_MODE=openai_compatible
 ML_OPENAI_BASE_URL=http://ollama:11434/v1
-ML_OPENAI_API_KEY=local-dev-key
 ML_OPENAI_MODEL_NAME=gpt-oss:20b
 ML_OPENAI_API_STYLE=ollama
+ML_OPENAI_TIMEOUT=25
+GPT_OSS_TIMEOUT=90
 ```
 
-keeps backend pointed at `ml_service`, but makes `ml_service` call a real
-model runner. With `ML_OPENAI_API_STYLE=ollama` it uses Ollama native
-`/api/generate`; otherwise it uses OpenAI-compatible `/chat/completions`.
-
-For local Ollama through docker compose:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile llm up -d --force-recreate ollama
-docker compose exec ollama ollama pull gpt-oss:20b
-bash scripts/warm_ollama_gpu.sh
-```
-
-Then set `ML_PREDICTOR_MODE=openai_compatible` in `.env` and recreate
-`ml_service backend`.
-
-If Docker cannot use the GPU, run Ollama on the Windows/WSL host instead and
-point the containers to it:
-
-```env
-ML_OPENAI_BASE_URL=http://host.docker.internal:11434/v1
-```
-
-If NVIDIA Container Toolkit is not installed for Docker, use plain compose
-instead:
+Запуск Ollama в compose:
 
 ```bash
 docker compose --profile llm up -d ollama
+docker compose exec ollama ollama pull gpt-oss:20b
+docker compose up -d --build --force-recreate ml_service backend frontend nginx
 ```
 
-## Manual vacancy parser activation
-
-The regular `/api/v1/analyze` flow is unchanged. It can still refresh a segment
-with `options.force_refresh=true`, but that also continues into salary analysis.
-
-For parser-only warmup or diagnostics use:
+Для GPU-режима используется `docker-compose.gpu.yml`:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/parser/refresh \
-  -H "Content-Type: application/json" \
-  -d '{
-    "profile": {
-      "title": "Python Backend Developer",
-      "experience_years": 3,
-      "location": "Москва",
-      "skills": ["Python", "FastAPI", "PostgreSQL"]
-    },
-    "sources": ["trudvsem", "fixture"],
-    "dry_run": false
-  }'
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile llm up -d ollama
+docker compose exec ollama ollama pull gpt-oss:20b
+TIMEOUT_SECONDS=600 bash scripts/warm_ollama_gpu.sh
 ```
 
-For source diagnostics without writing vacancies:
+## Конфигурация
+
+Основные переменные в `.env`:
+
+```env
+DATABASE_URL=postgresql+asyncpg://zarabotok:change_me_in_production@postgres:5432/zarabotok_db
+REDIS_URL=redis://redis:6379/0
+
+GPT_OSS_SERVICE_URL=http://ml_service:8001
+GPT_OSS_CLIENT_MODE=service
+GPT_OSS_PROMPT_VERSION=salary_estimation_prompt_v13
+
+ML_PREDICTOR_MODE=stub
+ML_OPENAI_BASE_URL=http://ollama:11434/v1
+ML_OPENAI_MODEL_NAME=gpt-oss:20b
+ML_OPENAI_API_STYLE=ollama
+
+NEXT_PUBLIC_API_URL=/api/v1
+NEXT_PUBLIC_ANALYZE_TIMEOUT_MS=120000
+```
+
+Для приватного демо можно включить bearer-token:
+
+```env
+API_AUTH_TOKEN=<strong-token>
+NEXT_PUBLIC_API_AUTH_TOKEN=<same-token-for-private-demo-only>
+```
+
+`NEXT_PUBLIC_*` попадает в browser bundle, поэтому это удобно только для
+закрытого демо. Для публичного production лучше закрывать доступ внешним
+auth/proxy-слоем.
+
+## Проверки
+
+Полная проверка backend и ml_service:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/parser/refresh \
-  -H "Content-Type: application/json" \
-  -d '{
-    "segment_key": "backend_developer:python:moscow:middle",
-    "sources": ["hh", "trudvsem", "habr", "fixture"],
-    "dry_run": true
-  }'
+bash scripts/run_backend_ml_checks.sh
 ```
 
-The response includes per-source `status`, `fetched_count`, `usable_count`, and
-`error`. Habr Career requires `HABR_CAREER_API_TOKEN`. HH can return 403 from
-ddos-guard depending on IP/network; the parser treats source errors as
-fail-open and continues with the remaining sources.
+Smoke для live-review:
+
+```bash
+bash scripts/live_review_smoke.sh
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run lint
+npm run build
+```
+
+Backend вручную:
+
+```bash
+cd backend
+python -m pip install -e ".[dev]"
+python -m ruff check app tests
+python -m pytest
+```
+
+ML service вручную:
+
+```bash
+cd ml_service
+python -m pip install -e ".[dev]"
+python -m pytest tests/test_predictor.py
+```
+
+## Деплой
+
+Подробный порядок запуска, GPU-вариант, миграции, smoke и production-like
+настройки описаны в [DEPLOYMENT.md](DEPLOYMENT.md).
+
+Короткий production-like цикл:
+
+```bash
+git pull
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build --force-recreate backend ml_service frontend nginx
+docker compose exec backend alembic upgrade head
+bash scripts/live_review_smoke.sh
+```
+
+Перед реальным деплоем обязательно поменять:
+
+- `POSTGRES_PASSWORD`;
+- `SECRET_KEY`;
+- `API_AUTH_TOKEN` или внешний auth-контур;
+- `BACKEND_CORS_ORIGINS`;
+- режим `DEBUG=false`;
+- стратегию резервного копирования PostgreSQL volume.

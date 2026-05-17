@@ -11,6 +11,7 @@ import app.services.analyze as analyze_module
 from app.models.llm_salary_result import LlmSalaryResult
 from app.schemas.analyze import AnalyzeRequest
 from app.services.analyze import AnalyzeService
+from app.services.gpt_oss_client import GptOssClientError
 from app.services.preflight import PreflightResult
 
 
@@ -144,6 +145,63 @@ async def test_failed_cached_result_can_be_replaced(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_model_client_error_returns_grounded_fallback(monkeypatch, mock_db):
+    preflight = PreflightResult(
+        request_hash="hash",
+        segment_key="backend_developer:python:moscow:middle",
+        segment_data_version="2026-05-17",
+        llm_input_payload=_input_payload("hash"),
+    )
+    service = AnalyzeService()
+    save_result = AsyncMock()
+    monkeypatch.setattr(service, "_save_result", save_result)
+    monkeypatch.setattr(analyze_module, "preflight_salary_request", AsyncMock(return_value=preflight))
+    monkeypatch.setattr(analyze_module, "find_llm_result_by_hash", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        analyze_module.gpt_oss_client,
+        "generate_once",
+        AsyncMock(side_effect=GptOssClientError("model returned invalid JSON content")),
+    )
+
+    response = await service.analyze(db=mock_db, request=_request(), redis=None)
+
+    assert response.status == "success"
+    assert response.source == "grounded-fallback"
+    assert response.data is not None
+    assert response.data.request_hash == "hash"
+    assert response.data.recommendations
+    save_result.assert_awaited_once()
+    assert save_result.await_args.kwargs["validation_status"] == "valid"
+
+
+@pytest.mark.asyncio
+async def test_invalid_model_payload_returns_grounded_fallback(monkeypatch, mock_db):
+    preflight = PreflightResult(
+        request_hash="hash",
+        segment_key="backend_developer:python:moscow:middle",
+        segment_data_version="2026-05-17",
+        llm_input_payload=_input_payload("hash"),
+    )
+    service = AnalyzeService()
+    save_result = AsyncMock()
+    monkeypatch.setattr(service, "_save_result", save_result)
+    monkeypatch.setattr(analyze_module, "preflight_salary_request", AsyncMock(return_value=preflight))
+    monkeypatch.setattr(analyze_module, "find_llm_result_by_hash", AsyncMock(return_value=None))
+    generate_once = AsyncMock(return_value={"request_hash": "wrong-shape"})
+    monkeypatch.setattr(analyze_module.gpt_oss_client, "generate_once", generate_once)
+
+    response = await service.analyze(db=mock_db, request=_request(), redis=None)
+
+    assert response.status == "success"
+    assert response.source == "grounded-fallback"
+    assert response.data is not None
+    assert response.data.salary_range.median == 210000
+    assert response.data.missing_skills[0].skill == "Docker"
+    save_result.assert_awaited_once()
+    assert save_result.await_args.kwargs["validation_status"] == "valid"
+
+
+@pytest.mark.asyncio
 async def test_save_result_updates_failed_existing_row(mock_db):
     existing = _cached_result("hash", validation_status="failed")
     mock_db.scalar = AsyncMock(return_value=existing)
@@ -200,7 +258,7 @@ class _BrokenRedis:
 
 
 @pytest.mark.asyncio
-async def test_lock_unavailable_fails_before_model_call(monkeypatch, mock_db):
+async def test_lock_unavailable_continues_without_redis(monkeypatch, mock_db):
     preflight = PreflightResult(
         request_hash="hash",
         segment_key="backend_developer:python:moscow:middle",
@@ -208,11 +266,12 @@ async def test_lock_unavailable_fails_before_model_call(monkeypatch, mock_db):
         llm_input_payload=_input_payload("hash"),
     )
     monkeypatch.setattr(analyze_module, "preflight_salary_request", AsyncMock(return_value=preflight))
-    generate_once = AsyncMock()
+    monkeypatch.setattr(analyze_module, "find_llm_result_by_hash", AsyncMock(return_value=None))
+    generate_once = AsyncMock(return_value=_valid_output("hash"))
     monkeypatch.setattr(analyze_module.gpt_oss_client, "generate_once", generate_once)
 
     response = await AnalyzeService().analyze(db=mock_db, request=_request(), redis=_BrokenRedis())
 
-    assert response.status == "error"
-    assert response.code == "LOCK_UNAVAILABLE"
-    generate_once.assert_not_called()
+    assert response.status == "success"
+    assert response.source == "gpt-oss-20b"
+    generate_once.assert_awaited_once()

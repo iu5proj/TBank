@@ -168,7 +168,7 @@ class AnalyzeResponse(BaseModel):
     """Unified success/error response for the frontend."""
 
     status: Literal["success", "error"]
-    source: Literal["gpt-oss-20b", "cache"] | None = None
+    source: Literal["gpt-oss-20b", "grounded-fallback", "cache"] | None = None
     data: GptOssSalaryResult | None = None
     code: str | None = None
     message: str | None = None
